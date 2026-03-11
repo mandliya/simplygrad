@@ -18,6 +18,7 @@ Key concepts:
 from typing import Any, List, Tuple, Optional, Union, Callable
 from deeplygrad.backend import xp, to_numpy
 import numpy as np
+from contextlib import contextmanager
 
 BackwardFn = Callable[[np.ndarray], None]
 
@@ -423,6 +424,11 @@ class Tensor:
   def __neg__(self):              return self.neg()
   def __matmul__(self, other):    return self.matmul(other)
   def __pow__(self, exp):         return self.pow(exp)
+  def __float__(self):            return float(self.data)
+  def __int__(self):              return int(self.data)
+  def __bool__(self):             return bool(self.data)
+  def __str__(self):              return str(self.data)
+  def __len__(self):              return len(self.data)
 
   def __repr__(self):
       grad_info = ", requires_grad=True" if self.requires_grad else ""
@@ -432,6 +438,15 @@ class Tensor:
       """Return data as a numpy array (moves off GPU if needed)."""
       return to_numpy(self.data)
 
+  @contextmanager
+  def no_grad(self):
+    """Context manager to temporarily disable gradient tracking."""
+    was_requires_grad = self.requires_grad
+    self.requires_grad = False
+    try:
+      yield
+    finally:
+      self.requires_grad = was_requires_grad
 
 ### Helpers
 

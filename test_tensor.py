@@ -40,7 +40,6 @@ def check_gradient(f, tensors, names=None, tol=1e-4):
 
     all_pass = True
     for t, name in zip(tensors, names):
-        print(f'{name=}, {t=}, {t.grad}')
         if not t.requires_grad:
             continue
         analytic = t.grad
