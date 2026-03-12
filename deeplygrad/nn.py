@@ -122,7 +122,7 @@ class Linear(Module):
         self.out_features = out_features
         scale = xp.sqrt(2.0 / in_features)
         self.weight = Tensor(
-            data=xp.random.randn(in_features, out_features) / scale,
+            data=xp.random.randn(in_features, out_features) * scale,
             requires_grad=True
         )
         self.bias = Tensor(
@@ -249,7 +249,9 @@ class CrossEntropyLoss(Module):
         batch_size, num_classes = logits.data.shape
         # Compute log-sum-exp for numerical stability
         max_logits = xp.max(logits.data, axis=1, keepdims=True)
-        log_sum_exp = max_logits + xp.log(xp.sum(xp.exp(logits.data - max_logits), axis=1, keepdims=True))
+        shifted = logits.data - max_logits
+        exp_shifted = xp.exp(shifted)
+        log_sum_exp = max_logits + xp.log(xp.sum(exp_shifted, axis=1, keepdims=True))
         
         # Compute the log-probabilities
         log_probs = logits.data - log_sum_exp

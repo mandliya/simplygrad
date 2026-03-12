@@ -61,11 +61,11 @@ def train_linear_regression(X_train, y_train, X_test, y_test, lr=0.01, epochs=10
         train_loss.backward()
         W.data -= lr * W.grad
         b.data -= lr * b.grad
-        train_loss = float(train_loss)
+        train_loss = train_loss.item()
         train_losses.append(train_loss)
         y_pred_test = X_test @ W + b
         test_loss = ((y_pred_test - y_test) ** 2).mean()
-        test_loss = float(test_loss)
+        test_loss = test_loss.item()
         test_losses.append(test_loss)
         if (epoch + 1) % 10 == 0:
             print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}")

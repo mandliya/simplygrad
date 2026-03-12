@@ -423,6 +423,7 @@ class Tensor:
   def __rtruediv__(self, other):  return _ensure_tensor(other).div(self)
   def __neg__(self):              return self.neg()
   def __matmul__(self, other):    return self.matmul(other)
+  def __rmatmul__(self, other):   return _ensure_tensor(other).matmul(self)
   def __pow__(self, exp):         return self.pow(exp)
   def __float__(self):            return float(self.data)
   def __int__(self):              return int(self.data)
@@ -459,6 +460,13 @@ class Tensor:
   def __repr__(self):
       grad_info = ", requires_grad=True" if self.requires_grad else ""
       return f"Tensor({to_numpy(self.data)}{grad_info})"
+
+  def item(self):
+      if self.data.size != 1:
+          raise ValueError(
+              f"item() can only be called on single-element tensors, got {self.shape}"
+          )
+      return self.data.item()
 
   def numpy(self):
       """Return data as a numpy array (moves off GPU if needed)."""
