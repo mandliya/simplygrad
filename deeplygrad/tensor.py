@@ -426,9 +426,35 @@ class Tensor:
   def __pow__(self, exp):         return self.pow(exp)
   def __float__(self):            return float(self.data)
   def __int__(self):              return int(self.data)
-  def __bool__(self):             return bool(self.data)
+  def __bool__(self):
+    if self.data.size != 1:
+      raise ValueError(
+        "The truth value of a Tensor with more than one element is ambiguous. "
+        "Use .sum(), .any() or .all()."
+      )
+    return bool(self.data)
   def __str__(self):              return str(self.data)
   def __len__(self):              return len(self.data)
+
+  def __gt__(self, other):
+    other = _ensure_tensor(other)
+    return Tensor((self.data > other.data).astype(self.data.dtype))
+
+  def __ge__(self, other):
+    other = _ensure_tensor(other)
+    return Tensor((self.data >= other.data).astype(self.data.dtype))
+  
+  def __lt__(self, other):
+    other = _ensure_tensor(other)
+    return Tensor((self.data < other.data).astype(self.data.dtype))
+    
+  def __le__(self, other):
+    other = _ensure_tensor(other)
+    return Tensor((self.data <= other.data).astype(self.data.dtype))
+
+  def __eq__(self, other):
+    other = _ensure_tensor(other)
+    return Tensor((self.data == other.data).astype(self.data.dtype))
 
   def __repr__(self):
       grad_info = ", requires_grad=True" if self.requires_grad else ""
@@ -487,4 +513,25 @@ def _unbroadcast(grad: xp.ndarray, target_shape: tuple) -> xp.ndarray:
   return grad.reshape(target_shape)
 
 
+def where(condition: Tensor, x: Tensor, y: Tensor) -> Tensor:
+    """Element-wise selection: out_i = x_i if condition_i else y_i"""
+    x = _ensure_tensor(x)
+    y = _ensure_tensor(y)
+    cond = condition.data.astype(bool)
+    out_data = xp.where(cond, x.data, y.data)
+    out = Tensor(out_data, requires_grad=x.requires_grad or y.requires_grad)
 
+    if out.requires_grad:
+        out._parents = [x, y]
+
+        def _backward(grad_output):
+          if x.requires_grad:
+            g = xp.where(cond, grad_output, xp.zeros_like(grad_output))
+            g = _unbroadcast(g, x.shape)
+            x.grad = x.grad + g if x.grad is not None else g
+          if y.requires_grad:
+            g = xp.where(cond, xp.zeros_like(grad_output), grad_output)
+            g = _unbroadcast(g, y.shape)
+            y.grad = y.grad + g if y.grad is not None else g
+        out._grad_fn = _backward
+    return out
