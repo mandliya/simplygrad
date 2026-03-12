@@ -66,7 +66,7 @@ Linear regression on the California Housing dataset using raw Tensor operations 
 python linear_regression/linear_regression.py
 ```
 
-Trains a linear model with gradient descent, producing a plot with loss curves and predicted vs actual values:
+Trains a linear model with gradient descent, producing loss curves and predicted vs actual values:
 
 ![Linear Regression Results](linear_regression/results_plot.png)
 
@@ -79,16 +79,6 @@ python neural_network/mnist.py
 ```
 
 Produces training/validation loss curves and a grid of test predictions:
-
-![MNIST Results](neural_network/mnist_loss.png)
-
-## Results
-
-### Linear Regression on California Housing
-
-![Linear Regression Results](linear_regression/results_plot.png)
-
-### MNIST Classification (3-layer MLP)
 
 ![MNIST Results](neural_network/mnist_loss.png)
 
