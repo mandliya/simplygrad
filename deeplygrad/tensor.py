@@ -90,13 +90,10 @@ class Tensor:
   def transpose(self, *axes):
     """Transpose dimensions"""
     if len(axes) == 0:
-      # Default: reverse all axes (like .T)
       axes_tuple = None
-      reverse_axes = None
     elif len(axes) == 2:
       axes_tuple = list(range(self.ndim))
       axes_tuple[axes[0]], axes_tuple[axes[1]] = axes_tuple[axes[1]], axes_tuple[axes[0]]
-      reverse_axes = axes_tuple
     else:
       raise ValueError("transpose expects 0 or 2 axis arguments")
 
@@ -107,10 +104,10 @@ class Tensor:
       
       def _backward(grad_output):
         if self.requires_grad:
-          if reverse_axes is not None:
+          if axes_tuple is None:
             g = grad_output.transpose()
           else:
-            g = grad_output.transpose(reverse_axes)
+            g = grad_output.transpose(axes_tuple)
           
           self.grad = self.grad + g if self.grad is not None else g
         
@@ -135,7 +132,7 @@ class Tensor:
     """ 
 
     if not self.requires_grad:
-      return RuntimeError("backward() called ona tensor that doesn't require grad")
+      raise RuntimeError("backward() called ona tensor that doesn't require grad")
     
     if grad is None:
       if self.data.size != 1:
@@ -284,11 +281,12 @@ class Tensor:
 
   def sum(self, axis=None, keepdims=False) -> 'Tensor':
     """
-    Summation over aixs
+    Summation over axis
 
-    Gradient: Sum is a many to one op. The gradient just broadcasts
-    the upstream scaler gradient back to the input shape
+    Gradient: Sum is a many-to-one op. The gradient just broadcasts
+    the upstream scalar gradient back to the input shape.
     """
+    input_shape = self.shape
     out_data = self.data.sum(axis=axis, keepdims=keepdims)
     out = Tensor(out_data, requires_grad=self.requires_grad)
 
@@ -298,14 +296,10 @@ class Tensor:
       def _backward(grad_output):
         if self.requires_grad:
           if axis is not None and not keepdims:
-            # Re-insert the reduced axis so broadcasting works
-            g = xp.expand_dims(grad_output, axis=axis)
-          else:
-            g = grad_output
-          
-          g = xp.broadcast_to(g, self.shape).copy()
+            grad_output = xp.expand_dims(grad_output, axis=axis)
+          g = xp.broadcast_to(grad_output, input_shape).copy()
           self.grad = self.grad + g if self.grad is not None else g
-        
+
       out._grad_fn = _backward
     return out
 
@@ -504,17 +498,15 @@ def _unbroadcast(grad: xp.ndarray, target_shape: tuple) -> xp.ndarray:
     return grad
 
   ndim_diff = grad.ndim - len(target_shape)
-  padded_shape = (1, ) * ndim_diff + target_shape
 
-  reduce_axes = []
-  for i, (gs, ts) in enumerate(zip(grad.shape, padded_shape)):
-    if ts == 1 and gs > 1:
-      reduce_axes.append(i)
-    elif ts == 1 and gs == 1:
-      # Was a leading dimension added by broadcasting — also reduce
-      if i < ndim_diff:
-        reduce_axes.append(i)
-  
+  # Leading dims prepended by broadcasting
+  reduce_axes = list(range(ndim_diff))
+
+  # Size-1 dims in target that were actually stretched
+  for i, s in enumerate(target_shape):
+    if s == 1 and grad.shape[ndim_diff + i] > 1:
+      reduce_axes.append(ndim_diff + i)
+
   if reduce_axes:
     grad = grad.sum(axis=tuple(reduce_axes), keepdims=True)
 
