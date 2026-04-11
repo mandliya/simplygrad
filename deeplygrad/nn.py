@@ -88,6 +88,21 @@ class Module:
     def eval(self) -> 'Module':
         return self.train(mode=False)
 
+    def apply(self, fn) -> 'Module':
+        """Recursively apply fn to every submodule (including self), like PyTorch."""
+        for attr_name in dir(self):
+            if attr_name.startswith('_'):
+                continue
+            attr = getattr(self, attr_name)
+            if isinstance(attr, Module):
+                attr.apply(fn)
+            elif isinstance(attr, (list, tuple)):
+                for item in attr:
+                    if isinstance(item, Module):
+                        item.apply(fn)
+        fn(self)
+        return self
+
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
@@ -194,6 +209,97 @@ class GELU(Module):
             out._grad_fn = _backward
         return out
     
+class Softmax(Module):
+    """Softmax: out_i = exp(x_i) / sum(exp(x_j)) along axis, with log-sum-exp stability."""
+    def __init__(self, axis: int = -1):
+        super().__init__()
+        self.axis = axis
+
+    def forward(self, x: Tensor) -> Tensor:
+        shifted = x.data - xp.max(x.data, axis=self.axis, keepdims=True)
+        exp_x = xp.exp(shifted)
+        probs = exp_x / xp.sum(exp_x, axis=self.axis, keepdims=True)
+        out = Tensor(probs, requires_grad=x.requires_grad)
+
+        if out.requires_grad:
+            out._parents = [x]
+
+            def _backward(grad_output):
+                s = xp.sum(grad_output * probs, axis=self.axis, keepdims=True)
+                g = probs * (grad_output - s)
+                x.grad = x.grad + g if x.grad is not None else g
+
+            out._grad_fn = _backward
+        return out
+
+
+class Dropout(Module):
+    """Inverted dropout: randomly zeros elements during training and scales by 1/(1-p)."""
+    def __init__(self, p: float = 0.5):
+        super().__init__()
+        self.p = p
+
+    def forward(self, x: Tensor) -> Tensor:
+        if not self.training or self.p == 0.0:
+            return x
+        mask = (xp.random.rand(*x.shape) > self.p).astype(x.data.dtype)
+        scale = 1.0 / (1.0 - self.p)
+        out_data = x.data * mask * scale
+        out = Tensor(out_data, requires_grad=x.requires_grad)
+
+        if out.requires_grad:
+            out._parents = [x]
+
+            def _backward(grad_output):
+                if x.requires_grad:
+                    g = grad_output * mask * scale
+                    x.grad = x.grad + g if x.grad is not None else g
+
+            out._grad_fn = _backward
+        return out
+
+
+class ModuleList(Module):
+    """An ordered container of Modules, iterable like a Python list."""
+    def __init__(self, modules=None):
+        super().__init__()
+        self._module_items = list(modules) if modules else []
+
+    def __getitem__(self, idx):
+        return self._module_items[idx]
+
+    def __len__(self):
+        return len(self._module_items)
+
+    def __iter__(self):
+        return iter(self._module_items)
+
+    def append(self, module: Module) -> 'ModuleList':
+        self._module_items.append(module)
+        return self
+
+    def parameters(self) -> list:
+        params = []
+        for m in self._module_items:
+            if isinstance(m, Module):
+                params.extend(m.parameters())
+        return params
+
+    def train(self, mode: bool = True) -> 'Module':
+        self.training = mode
+        for m in self._module_items:
+            if isinstance(m, Module):
+                m.train(mode)
+        return self
+
+    def apply(self, fn) -> 'Module':
+        for m in self._module_items:
+            if isinstance(m, Module):
+                m.apply(fn)
+        fn(self)
+        return self
+
+
 # ======================================================================
 #  4. Loss functions, start with MSE
 # ======================================================================
@@ -278,3 +384,48 @@ class CrossEntropyLoss(Module):
             loss._grad_fn = _backward
 
         return loss
+
+class LayerNorm(Module):
+    """
+    Layer Normalization: out = gamma * (x - mean(x)) / sqrt(var(x) + eps) + beta
+    Normalizes along the last dimension (feature dim).
+    """
+    def __init__(self, d_model: int, eps: float = 1e-5):
+        super().__init__()
+        self.d_model = d_model
+        self.eps = eps
+        self.gamma = Tensor(xp.ones(d_model), requires_grad=True)
+        self.beta = Tensor(xp.zeros(d_model), requires_grad=True)
+
+    def forward(self, x: Tensor) -> Tensor:
+        mean = x.mean(axis=-1, keepdims=True)
+        diff = x - mean
+        var = (diff * diff).mean(axis=-1, keepdims=True)
+        x_norm = diff / (var + self.eps).pow(0.5)
+        out = x_norm * self.gamma + self.beta
+        return out
+
+class Embedding(Module):
+    """
+    Embedding layer: out = x @ W
+    """
+    def __init__(self, n_vocab: int, d_model: int):
+        super().__init__()
+        self.n_vocab = n_vocab
+        self.d_model = d_model
+        scale = 0.02
+        self.W = Tensor(xp.random.randn(n_vocab, d_model) * scale, requires_grad=True)
+
+    def forward(self, x: Tensor) -> Tensor:
+        indices = x.data.astype(int)
+        out_data = self.W.data[indices]
+        out = Tensor(out_data, requires_grad=self.W.requires_grad)
+        if out.requires_grad:
+            out._parents = [self.W]
+
+            def _backward(grad_output):
+                grad_W = xp.zeros_like(self.W.data)
+                xp.add.at(grad_W, indices, grad_output)
+                self.W.grad = self.W.grad + grad_W if self.W.grad is not None else grad_W
+            out._grad_fn = _backward
+        return out

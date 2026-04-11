@@ -88,14 +88,20 @@ class Tensor:
     return self.shape[dim]
   
   def transpose(self, *axes):
-    """Transpose dimensions"""
+    """Transpose dimensions. Accepts 0 args (full reverse), 2 args (swap two dims),
+    or ndim args (full permutation)."""
     if len(axes) == 0:
       axes_tuple = None
     elif len(axes) == 2:
       axes_tuple = list(range(self.ndim))
       axes_tuple[axes[0]], axes_tuple[axes[1]] = axes_tuple[axes[1]], axes_tuple[axes[0]]
+      axes_tuple = tuple(axes_tuple)
+    elif len(axes) == self.ndim:
+      axes_tuple = tuple(axes)
     else:
-      raise ValueError("transpose expects 0 or 2 axis arguments")
+      raise ValueError(
+        f"transpose expects 0, 2, or {self.ndim} axis arguments, got {len(axes)}"
+      )
 
     out_data = self.data.transpose(axes_tuple)
     out = Tensor(out_data, requires_grad=self.requires_grad)
@@ -107,7 +113,10 @@ class Tensor:
           if axes_tuple is None:
             g = grad_output.transpose()
           else:
-            g = grad_output.transpose(axes_tuple)
+            inv_perm = [0] * len(axes_tuple)
+            for i, ax in enumerate(axes_tuple):
+              inv_perm[ax] = i
+            g = grad_output.transpose(tuple(inv_perm))
           
           self.grad = self.grad + g if self.grad is not None else g
         
@@ -390,6 +399,51 @@ class Tensor:
           self.grad = self.grad + g if self.grad is not None else g
       out._grad_fn = _backward
     return out
+  
+  def sin(self) -> 'Tensor':
+    """Sine: out = sin(self)"""
+    out_data = xp.sin(self.data)
+    out = Tensor(out_data, requires_grad=self.requires_grad)
+    if out.requires_grad:
+      out._parents = [self]
+
+      def _backward(grad_output: xp.ndarray):
+        # d(sin(x))/dx = cos(x)
+        g = grad_output * xp.cos(self.data)
+        self.grad = self.grad + g if self.grad is not None else g
+    
+      out._grad_fn = _backward
+    return out
+  
+  def cos(self) -> 'Tensor':
+    """Cosine: out = cos(self)"""
+    out_data = xp.cos(self.data)
+    out = Tensor(out_data, requires_grad=self.requires_grad)
+    if out.requires_grad:
+      out._parents = [self]
+
+      def _backward(grad_output: xp.ndarray):
+        # d(cos(x))/dx = -sin(x)
+        g = grad_output * (-xp.sin(self.data))
+        self.grad = self.grad + g if self.grad is not None else g
+      
+      out._grad_fn = _backward
+    return out
+
+  def masked_fill(self, mask: 'Tensor', value: float) -> 'Tensor':
+      """Replace elements where mask is True (nonzero) with value. No gradient flows
+      through masked positions."""
+      cond = mask.data.astype(bool)
+      out_data = xp.where(cond, value, self.data)
+      out = Tensor(out_data, requires_grad=self.requires_grad)
+      if out.requires_grad:
+          out._parents = [self]
+          def _backward(grad_output):
+              if self.requires_grad:
+                  g = xp.where(cond, 0.0, grad_output)
+                  self.grad = self.grad + g if self.grad is not None else g
+          out._grad_fn = _backward
+      return out
 
   def __getitem__(self, idx) -> 'Tensor':
       out_data = self.data[idx]
@@ -533,5 +587,39 @@ def where(condition: Tensor, x: Tensor, y: Tensor) -> Tensor:
             g = xp.where(cond, xp.zeros_like(grad_output), grad_output)
             g = _unbroadcast(g, y.shape)
             y.grad = y.grad + g if y.grad is not None else g
+        out._grad_fn = _backward
+    return out
+
+def cat(tensors: list, axis: int = 0) -> Tensor:
+    """
+    Concatenate tensors along an axis. Gradient splits back to each input.
+ 
+    Like torch.cat / np.concatenate.
+    Used in RoPE to reassemble rotated halves.
+    """
+    data_list = [t.data for t in tensors]
+    out_data = xp.concatenate(data_list, axis=axis)
+    any_grad = any(t.requires_grad for t in tensors)
+    out = Tensor(out_data, requires_grad=any_grad)
+ 
+    if any_grad:
+        out._parents = list(tensors)
+ 
+        # Pre-compute split points for backward
+        split_sizes = [t.shape[axis] for t in tensors]
+ 
+        def _backward(grad_output):
+            # Split gradient back along the concat axis
+            sections = []
+            idx = 0
+            for size in split_sizes:
+                sections.append(idx + size)
+                idx += size
+            grads = xp.split(grad_output, sections[:-1], axis=axis)
+ 
+            for t, g in zip(tensors, grads):
+                if t.requires_grad:
+                    t.grad = t.grad + g if t.grad is not None else g
+ 
         out._grad_fn = _backward
     return out
