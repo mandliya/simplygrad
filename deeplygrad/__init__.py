@@ -11,4 +11,4 @@ from deeplygrad.backend import xp, BACKEND_NAME
 __version__ = "0.1.0"
 __all__ = [
     "Tensor", "xp", "BACKEND_NAME", "Module", "Linear", "ReLU", 
-    "CrossEntropyLoss", "Adam", "SGD"]
+    "CrossEntropyLoss", "Adam", "SGD", "cat", "stack"]
